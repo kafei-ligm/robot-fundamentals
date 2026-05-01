@@ -1,13 +1,11 @@
 """
-Dynamics module for serial-link manipulators.
+用于串联机械臂的动力学模块。
 
-Implements both Lagrangian (energy-based) and Newton-Euler (recursive)
-formulations for computing the standard manipulator equation:
+实现了拉格朗日（基于能量）和牛顿-欧拉（递归）公式，用于计算标准的机械臂方程：
 
     M(q) * q_ddot + C(q, q_dot) * q_dot + g(q) = tau
 
-All matrices are built symbolically via the geometric Jacobian so the
-code generalises to arbitrary serial chains defined by DH parameters.
+所有矩阵均通过几何雅可比矩阵进行符号构建，因此该代码可推广到由DH参数定义的任意串联链。
 """
 
 import numpy as np
@@ -16,7 +14,7 @@ from .kinematics import SerialKinematics, DHParams
 
 
 class LinkInertia:
-    """Inertial parameters for a single rigid link."""
+    """单个刚性连杆的惯性参数。"""
 
     def __init__(
         self,
@@ -25,12 +23,11 @@ class LinkInertia:
         inertia: np.ndarray,
     ):
         """
-        Parameters
+        参数
         ----------
-        mass    : link mass (kg).
-        com     : (3,) centre-of-mass in the link's own frame.
-        inertia : (3, 3) rotational inertia tensor about the CoM,
-                  expressed in the link frame.
+        mass    : 连杆质量 (kg)。
+        com     : (3,) 连杆自身坐标系下的质心位置。
+        inertia : (3, 3) 绕质心的旋转惯量张量，在连杆坐标系下表示。
         """
         self.mass = mass
         self.com = np.asarray(com, dtype=float)
@@ -39,14 +36,13 @@ class LinkInertia:
 
 class ManipulatorDynamics:
     """
-    Compute M, C, g for a serial manipulator using the
-    composite-rigid-body algorithm (Lagrangian formulation).
+    使用复合刚体算法（拉格朗日公式）计算串联机械臂的M、C、g矩阵。
 
-    Parameters
+    参数
     ----------
-    kinematics : SerialKinematics instance (provides DH and FK).
-    link_props : list of LinkInertia, one per joint/link.
-    gravity    : (3,) gravity vector in base frame, default [0, -9.81, 0].
+    kinematics : SerialKinematics 实例 (提供DH参数和正向运动学)。
+    link_props : 包含 LinkInertia 的列表，每个关节/连杆对应一个。
+    gravity    : (3,) 基坐标系下的重力向量，默认为 [0, -9.81, 0]。
     """
 
     def __init__(
@@ -62,23 +58,23 @@ class ManipulatorDynamics:
         assert len(link_props) == self.n
 
     # ------------------------------------------------------------------
-    # helpers: per-link Jacobians (linear + angular for CoM)
+    # 辅助函数：每个连杆的雅可比矩阵（用于质心的线速度和角速度）
     # ------------------------------------------------------------------
     def _com_jacobians(
         self, q: np.ndarray
     ) -> list:
         """
-        Return list of (Jv_i, Jw_i) for each link's centre of mass.
-        Each Jv_i is (3, n), Jw_i is (3, n).
+        返回每个连杆质心的 (Jv_i, Jw_i) 列表。
+        每个 Jv_i 维度为 (3, n)，Jw_i 维度为 (3, n)。
         """
         frames = self.kin.fk_all(q)
         result = []
 
         for i in range(self.n):
-            # CoM position in base frame
+            # 基坐标系下的质心位置
             R_i = frames[i + 1][:3, :3]
             p_i = frames[i + 1][:3, 3]
-            p_com = p_i + R_i @ self.links[i].com  # approximate (link frame)
+            p_com = p_i + R_i @ self.links[i].com  # 近似值（转换到连杆坐标系）
 
             Jv = np.zeros((3, self.n))
             Jw = np.zeros((3, self.n))
@@ -93,11 +89,11 @@ class ManipulatorDynamics:
         return result
 
     # ------------------------------------------------------------------
-    # Mass (inertia) matrix   M(q)
+    # 质量（惯性）矩阵   M(q)
     # ------------------------------------------------------------------
     def mass_matrix(self, q: np.ndarray) -> np.ndarray:
         """
-        Compute the n x n joint-space inertia matrix M(q).
+        计算 n x n 的关节空间惯性矩阵 M(q)。
 
         M = sum_i  m_i * Jv_i^T Jv_i  +  Jw_i^T  R_i I_i R_i^T  Jw_i
         """
@@ -108,29 +104,28 @@ class ManipulatorDynamics:
         for i, (Jv, Jw) in enumerate(jacs):
             m = self.links[i].mass
             R_i = frames[i + 1][:3, :3]
-            I_base = R_i @ self.links[i].inertia @ R_i.T  # inertia in base
+            I_base = R_i @ self.links[i].inertia @ R_i.T  # 将惯量张量转换到基坐标系
 
             M += m * (Jv.T @ Jv) + Jw.T @ I_base @ Jw
         return M
 
     # ------------------------------------------------------------------
-    # Coriolis / centrifugal   C(q, qdot)   via Christoffel symbols
+    # 科里奥利/离心力矩阵   C(q, qdot)   （通过克里斯托费尔符号）
     # ------------------------------------------------------------------
     def coriolis_matrix(
         self, q: np.ndarray, dq: np.ndarray, delta: float = 1e-7
     ) -> np.ndarray:
         """
-        Coriolis matrix C(q, qdot) such that the velocity-dependent
-        forces are  C(q, qdot) * qdot.
+        科里奥利矩阵 C(q, qdot)，使得与速度相关的力为 C(q, qdot) * qdot。
 
-        Computed from Christoffel symbols of the first kind:
+        通过第一类克里斯托费尔符号计算：
             c_{ijk} = 0.5 * (dM_{ij}/dq_k + dM_{ik}/dq_j - dM_{jk}/dq_i)
             C_{ij}  = sum_k  c_{ijk} * dq_k
         """
         n = self.n
         M0 = self.mass_matrix(q)
 
-        # partial derivatives  dM/dq_k  via central differences
+        # 通过中心差分法求偏导数  dM/dq_k
         dM = np.zeros((n, n, n))  # dM[i,j,k] = dM_{ij}/dq_k
         for k in range(n):
             q_plus = q.copy();  q_plus[k] += delta
@@ -146,11 +141,11 @@ class ManipulatorDynamics:
         return C
 
     # ------------------------------------------------------------------
-    # Gravity vector   g(q)
+    # 重力向量   g(q)
     # ------------------------------------------------------------------
     def gravity_vector(self, q: np.ndarray) -> np.ndarray:
         """
-        Gravity torque vector g(q).
+        重力矩向量 g(q)。
 
         g_j = - sum_i  m_i * g^T * Jv_i[:, j]
         """
@@ -162,18 +157,18 @@ class ManipulatorDynamics:
         return g
 
     # ------------------------------------------------------------------
-    # Inverse dynamics:  tau = M q_ddot + C qdot + g
+    # 逆向动力学:  tau = M q_ddot + C qdot + g
     # ------------------------------------------------------------------
     def inverse_dynamics(
         self, q: np.ndarray, dq: np.ndarray, ddq: np.ndarray
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
         """
-        Given motion (q, dq, ddq), compute required joint torques.
+        给定运动状态 (q, dq, ddq)，计算所需的关节扭矩。
 
-        Returns
+        返回
         -------
-        tau   : (n,) joint torques.
-        terms : dict with keys 'M', 'C', 'g' for inspection.
+        tau   : (n,) 关节扭矩。
+        terms : 包含键 'M', 'C', 'g' 的字典，便于检查中间项。
         """
         M = self.mass_matrix(q)
         C = self.coriolis_matrix(q, dq)
@@ -182,18 +177,18 @@ class ManipulatorDynamics:
         return tau, {"M": M, "C": C, "g": g}
 
     # ------------------------------------------------------------------
-    # Forward dynamics:  q_ddot = M^{-1} (tau - C qdot - g)
+    # 正向动力学:  q_ddot = M^{-1} (tau - C qdot - g)
     # ------------------------------------------------------------------
     def forward_dynamics(
         self, q: np.ndarray, dq: np.ndarray, tau: np.ndarray
     ) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
         """
-        Given torques and current state, compute joint accelerations.
+        给定扭矩和当前状态，计算关节加速度。
 
-        Returns
+        返回
         -------
-        ddq   : (n,) joint accelerations.
-        terms : dict with keys 'M', 'C', 'g'.
+        ddq   : (n,) 关节加速度。
+        terms : 包含键 'M', 'C', 'g' 的字典。
         """
         M = self.mass_matrix(q)
         C = self.coriolis_matrix(q, dq)
@@ -202,7 +197,7 @@ class ManipulatorDynamics:
         return ddq, {"M": M, "C": C, "g": g}
 
     # ------------------------------------------------------------------
-    # Simulation (Euler integration)
+    # 仿真 (欧拉积分)
     # ------------------------------------------------------------------
     def simulate(
         self,
@@ -213,19 +208,19 @@ class ManipulatorDynamics:
         duration: float = 2.0,
     ) -> Dict[str, np.ndarray]:
         """
-        Simulate forward dynamics with a given torque policy.
+        使用给定的扭矩策略模拟正向动力学。
 
-        Parameters
+        参数
         ----------
-        q0      : initial joint angles.
-        dq0     : initial joint velocities.
-        tau_fn  : callable(t, q, dq) -> tau array.
-        dt      : time step (s).
-        duration: total time (s).
+        q0      : 初始关节角度。
+        dq0     : 初始关节速度。
+        tau_fn  : 可调用对象(t, q, dq) -> 返回 tau 数组。
+        dt      : 时间步长 (s)。
+        duration: 总时间 (s)。
 
-        Returns
+        返回
         -------
-        dict with keys 't', 'q', 'dq', 'ddq', 'tau'.
+        包含键 't', 'q', 'dq', 'ddq', 'tau' 的字典。
         """
         steps = int(duration / dt)
         t_arr = np.zeros(steps)
@@ -248,7 +243,7 @@ class ManipulatorDynamics:
             ddq_arr[k] = ddq
             tau_arr[k] = tau
 
-            # semi-implicit Euler
+            # 半隐式欧拉法
             dq = dq + ddq * dt
             q = q + dq * dt
 
@@ -256,7 +251,7 @@ class ManipulatorDynamics:
 
 
 # ======================================================================
-# Convenience: 2-R planar arm dynamics
+# 快捷功能：二自由度 (2-R) 平面机械臂动力学
 # ======================================================================
 def make_2r_dynamics(
     l1: float = 1.0,
@@ -265,9 +260,9 @@ def make_2r_dynamics(
     m2: float = 0.8,
 ) -> ManipulatorDynamics:
     """
-    Create dynamics model for a planar 2R arm.
+    创建平面2R机械臂的动力学模型。
 
-    Assumes uniform slender rods with CoM at mid-link.
+    假设连杆为均匀细长杆，且质心位于连杆中点。
     """
     from .kinematics import make_2r
 
