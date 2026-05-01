@@ -1,8 +1,7 @@
 """
-Trajectory planning module.
+轨迹规划模块。
 
-Provides trapezoidal and S-curve velocity profiles for both
-joint-space and Cartesian-space motion planning.
+为关节空间和笛卡尔空间的运动规划提供梯形和 S 型 (S-curve) 速度曲线。
 """
 
 import numpy as np
@@ -12,23 +11,22 @@ from typing import Dict
 
 @dataclass
 class TrajectoryResult:
-    """Container for a planned trajectory."""
-    t: np.ndarray       # (N,) time stamps
-    pos: np.ndarray     # (N,) or (N,3) position
-    vel: np.ndarray     # (N,) or (N,3) velocity
-    acc: np.ndarray     # (N,) or (N,3) acceleration
-    jerk: np.ndarray = None  # (N,) or (N,3) jerk (S-curve only)
+    """规划轨迹的容器。"""
+    t: np.ndarray            # (N,) 时间戳
+    pos: np.ndarray          # (N,) 或 (N,3) 位置
+    vel: np.ndarray          # (N,) 或 (N,3) 速度
+    acc: np.ndarray          # (N,) 或 (N,3) 加速度
+    jerk: np.ndarray = None  # (N,) 或 (N,3) 加加速度/急动度 (仅限S型曲线)
 
 
 # ======================================================================
-# Trapezoidal velocity profile
+# 梯形速度曲线
 # ======================================================================
 class TrapezoidPlanner:
     """
-    Trapezoidal (bang-coast-bang) velocity profile.
+    梯形（加速-匀速-减速，bang-coast-bang）速度曲线。
 
-    Guarantees continuous position and velocity; acceleration is
-    piecewise constant with three phases: accelerate, cruise, decelerate.
+    保证位置和速度的连续性；加速度是分段常数，分为三个阶段：加速、匀速（巡航）和减速。
     """
 
     def __init__(self, v_max: float, a_max: float):
@@ -37,7 +35,7 @@ class TrapezoidPlanner:
 
     def plan(self, start: float, goal: float, n_pts: int = 1000) -> TrajectoryResult:
         """
-        Plan a 1-D trapezoidal profile from *start* to *goal*.
+        规划从 *start* 到 *goal* 的一维梯形速度曲线。
         """
         delta = goal - start
         sign = np.sign(delta)
@@ -48,12 +46,12 @@ class TrapezoidPlanner:
             z = np.full(n_pts, start)
             return TrajectoryResult(t, z, np.zeros(n_pts), np.zeros(n_pts))
 
-        # timing
+        # 时间计算
         t_acc = self.v_max / self.a_max
         d_acc = 0.5 * self.a_max * t_acc ** 2
 
         if 2 * d_acc >= d:
-            # triangle profile (never reaches v_max)
+            # 三角形曲线 (无法达到最大速度 v_max)
             t_acc = np.sqrt(d / self.a_max)
             t_cruise = 0.0
             v_peak = self.a_max * t_acc
@@ -70,19 +68,19 @@ class TrapezoidPlanner:
 
         for i, ti in enumerate(t):
             if ti <= t_acc:
-                # accelerate
+                # 加速段
                 acc[i] = sign * self.a_max
                 vel[i] = sign * self.a_max * ti
                 pos[i] = start + sign * 0.5 * self.a_max * ti ** 2
             elif ti <= t_acc + t_cruise:
-                # cruise
+                # 匀速段
                 dt = ti - t_acc
                 acc[i] = 0.0
                 vel[i] = sign * v_peak
                 pos[i] = start + sign * (d_acc + v_peak * dt) if 2 * d_acc < d \
                     else start + sign * (0.5 * self.a_max * t_acc**2 + v_peak * dt)
             else:
-                # decelerate
+                # 减速段
                 dt = ti - t_acc - t_cruise
                 acc[i] = -sign * self.a_max
                 vel[i] = sign * (v_peak - self.a_max * dt)
@@ -92,14 +90,13 @@ class TrapezoidPlanner:
 
 
 # ======================================================================
-# S-curve velocity profile
+# S 型速度曲线
 # ======================================================================
 class SCurvePlanner:
     """
-    Seven-segment S-curve velocity profile.
+    七段式 S 型速度曲线。
 
-    Provides continuous jerk, yielding smooth acceleration transitions
-    that reduce mechanical vibration.
+    提供连续的加加速度（jerk），产生平滑的加速度过渡，从而减少机械振动。
     """
 
     def __init__(self, v_max: float, a_max: float, j_max: float):
@@ -109,7 +106,7 @@ class SCurvePlanner:
 
     def plan(self, start: float, goal: float, n_pts: int = 2000) -> TrajectoryResult:
         """
-        Plan a 1-D S-curve profile from *start* to *goal*.
+        规划从 *start* 到 *goal* 的一维 S 型速度曲线。
         """
         delta = goal - start
         sign = np.sign(delta)
@@ -120,30 +117,30 @@ class SCurvePlanner:
             z = np.full(n_pts, start)
             return TrajectoryResult(t, z, np.zeros(n_pts), np.zeros(n_pts), np.zeros(n_pts))
 
-        # Phase durations --------------------------------------------------
-        # t_j = jerk phase, t_a = constant-accel phase, t_v = cruise phase
-        t_j = self.a_max / self.j_max  # jerk ramp time
+        # 阶段持续时间 --------------------------------------------------
+        # t_j = 加加速度段, t_a = 匀加速段, t_v = 匀速段
+        t_j = self.a_max / self.j_max  # 加加速度斜坡时间
 
-        # check if we can reach v_max
-        v_acc = self.a_max * t_j  # speed gained during full accel phase (j+const+j)
-        # full accel phase = 2*t_j for jerk ramps + t_a for const accel
-        # first assume t_a exists
+        # 检查是否能达到 v_max
+        v_acc = self.a_max * t_j  # 在完整加速阶段 (j+匀加+j) 获得的速度
+        # 完整加速阶段 = 2*t_j (加加速度斜坡) + t_a (匀加速)
+        # 首先假设存在 t_a 段
         t_a = (self.v_max - self.a_max * t_j) / self.a_max
         if t_a < 0:
-            # can't reach v_max even with full accel
+            # 即使全力加速也无法达到 v_max
             t_a = 0
             t_j = np.sqrt(self.v_max / self.j_max)
 
-        # distance covered in accel & decel (symmetric)
+        # 加速和减速阶段走过的距离 (对称)
         d_accel = self.j_max * t_j**2 * t_j / 6 + \
                   0.5 * self.a_max * t_a * (t_a + 2 * t_j) + \
-                  self.j_max * t_j**2 / 2 * t_a  # simplified
-        # use numerical integration for reliability
+                  self.j_max * t_j**2 / 2 * t_a  # 简化公式
+        # 使用数值积分以确保可靠性
         d_accel = self._accel_distance(t_j, t_a)
-        d_decel = d_accel  # symmetric
+        d_decel = d_accel  # 对称
 
         if 2 * d_accel >= d:
-            # no cruise phase; scale down
+            # 没有匀速段；等比例缩放
             ratio = np.sqrt(d / (2 * d_accel)) if d_accel > 0 else 0
             t_j *= ratio
             t_a *= ratio
@@ -153,7 +150,7 @@ class SCurvePlanner:
             v_peak = self._peak_vel(t_j, t_a)
             t_v = (d - 2 * d_accel) / v_peak if v_peak > 0 else 0.0
 
-        # build 7 segment durations
+        # 构建 7 个时间段的持续时间
         segs = [t_j, t_a, t_j, t_v, t_j, t_a, t_j]
         T = sum(segs)
         t_bounds = np.cumsum([0] + segs)
@@ -164,9 +161,9 @@ class SCurvePlanner:
         acc = np.empty(n_pts)
         jerk = np.empty(n_pts)
 
-        # state integration
+        # 状态积分
         s = 0.0; v = 0.0; a = 0.0
-        jerk_signs = [1, 0, -1, 0, -1, 0, 1]  # jerk direction per segment
+        jerk_signs = [1, 0, -1, 0, -1, 0, 1]  # 每个时间段的加加速度方向
 
         prev_idx = 0
         for seg_i in range(7):
@@ -179,7 +176,7 @@ class SCurvePlanner:
             for idx in indices:
                 dt = t[idx] - (t[indices[0]] if len(indices) > 0 else t_bounds[seg_i])
                 if idx == indices[0]:
-                    # store state at segment start
+                    # 存储时间段开始时的状态
                     s0, v0, a0 = s, v, a
 
                 dt = t[idx] - t_bounds[seg_i]
@@ -188,15 +185,15 @@ class SCurvePlanner:
                 vel[idx] = v0 + a0 * dt + 0.5 * j_val * dt ** 2
                 pos[idx] = start + sign * abs(
                     s0 + v0 * dt + 0.5 * a0 * dt**2 + (1 / 6) * j_val * dt**3
-                ) * sign  # keep sign consistent
+                ) * sign  # 保持符号一致
 
-            # advance state to end of segment
+            # 将状态推进到时间段结束
             dt_seg = segs[seg_i]
             a = a0 + j_val * dt_seg
             v = v0 + a0 * dt_seg + 0.5 * j_val * dt_seg ** 2
             s = s0 + v0 * dt_seg + 0.5 * a0 * dt_seg**2 + (1 / 6) * j_val * dt_seg**3
 
-        # fix last point
+        # 修正最后一个点
         pos[-1] = goal
         vel[-1] = 0
         acc[-1] = 0
@@ -205,26 +202,26 @@ class SCurvePlanner:
         return TrajectoryResult(t, pos, vel, acc, jerk)
 
     def _accel_distance(self, t_j, t_a):
-        """Distance covered during the 3-segment acceleration phase."""
+        """在由3段组成的加速阶段中走过的距离。"""
         j = self.j_max
         a = self.a_max if t_a > 0 else j * t_j
 
-        # segment 1: jerk ramp up
+        # 第 1 段: 加加速度上升
         d1 = (1 / 6) * j * t_j ** 3
         v1 = 0.5 * j * t_j ** 2
         a1 = j * t_j
 
-        # segment 2: constant accel
+        # 第 2 段: 匀加速
         d2 = v1 * t_a + 0.5 * a1 * t_a ** 2
         v2 = v1 + a1 * t_a
 
-        # segment 3: jerk ramp down
+        # 第 3 段: 加加速度下降
         d3 = v2 * t_j + 0.5 * a1 * t_j ** 2 - (1 / 6) * j * t_j ** 3
 
         return d1 + d2 + d3
 
     def _peak_vel(self, t_j, t_a):
-        """Velocity reached at the end of the acceleration phase."""
+        """在加速阶段结束时达到的速度。"""
         j = self.j_max
         v1 = 0.5 * j * t_j ** 2
         a1 = j * t_j
@@ -234,7 +231,7 @@ class SCurvePlanner:
 
 
 # ======================================================================
-# Cartesian straight-line planner
+# 笛卡尔空间直线规划器
 # ======================================================================
 def plan_cartesian_line(
     start: np.ndarray,
@@ -243,17 +240,17 @@ def plan_cartesian_line(
     n_pts: int = 1000,
 ) -> Dict[str, np.ndarray]:
     """
-    Plan a straight-line Cartesian trajectory using a 1-D profile.
+    使用一维速度曲线规划笛卡尔空间中的直线轨迹。
 
-    Parameters
+    参数
     ----------
-    start, goal : (3,) arrays.
-    planner     : TrapezoidPlanner or SCurvePlanner instance.
-    n_pts       : number of trajectory points.
+    start, goal : (3,) 数组。
+    planner     : TrapezoidPlanner 或 SCurvePlanner 实例。
+    n_pts       : 轨迹点的数量。
 
-    Returns
+    返回
     -------
-    dict with 't', 'pos' (N,3), 'vel' (N,3), 'acc' (N,3).
+    包含 't', 'pos' (N,3), 'vel' (N,3), 'acc' (N,3) 的字典。
     """
     delta = goal - start
     dist = np.linalg.norm(delta)
