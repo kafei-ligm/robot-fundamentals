@@ -1,22 +1,33 @@
-# Robot Fundamentals
+# Robot Fundamentals: 从零构建机械臂底层算法库
 
-从零实现串联机械臂的运动学、动力学与轨迹规划算法。全部基于 NumPy 构建，不依赖任何外部机器人库。
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
+[![NumPy](https://img.shields.io/badge/NumPy-Math-deepgreen.svg)](https://numpy.org/)
+[![Matplotlib](https://img.shields.io/badge/Matplotlib-Visualization-orange.svg)](https://matplotlib.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 项目结构
+本项目旨在**从零实现**串联机械臂的运动学、动力学与轨迹规划算法。全部底层逻辑纯基于 NumPy 构建，**不依赖任何外部机器人学库（如 Robotics Toolbox 或 ROS）**，以此深入理解机器人学背后的核心数学原理与物理模型。
 
-```
+代码采用严格的**面向对象编程 (OOP)** 设计，并包含完整的 **Type Hinting (类型提示)**，保证了高可读性与易扩展性。
+
+## 🌟 核心特性展示 (Key Features)
+- **运动学 (Kinematics)**: 完整的 DH 参数正运动学解析、解析法逆向运动学（支持多解/姿态选择）、雅可比矩阵与可操作度 (Manipulability) 计算。
+- **动力学 (Dynamics)**: 基于拉格朗日方程的动力学建模（自动推导质量矩阵、科里奥利矩阵和重力向量）、正/逆动力学仿真、引入重力补偿的 PD 控制。
+- **轨迹规划 (Trajectory)**: 关节空间与笛卡尔空间的路径插补、梯形速度曲线 (Bang-Coast-Bang) 与保证加加速度连续的 S 型 (S-Curve) 速度规划。
+
+## 📁 项目结构
+```text
 robot-fundamentals/
 ├── core/
 │   ├── kinematics.py      # DH 变换、正/逆运动学、雅可比矩阵
 │   ├── dynamics.py        # 质量矩阵、科里奥利矩阵、正/逆动力学、仿真
 │   ├── trajectory.py      # 梯形与 S 曲线速度规划
-│   └── visualization.py   # 机械臂绘制、轨迹图表
-├── examples/
-│   ├── 01_kinematics.py   # 正/逆运动学演示
-│   ├── 02_jacobian.py     # 雅可比与可操作性分析
-│   ├── 03_dynamics.py     # 动力学仿真与 PD 控制
-│   └── 04_trajectory.py   # 轨迹规划对比
-└── assets/                # 自动生成的图表
+│   └── visualization.py   # 出版物级别的机械臂与图表绘制
+├── examples/              # 开箱即用的演示脚本
+│   ├── 01_kinematics.py
+│   ├── 02_jacobian.py
+│   ├── 03_dynamics.py
+│   └── 04_trajectory.py
+└── assets/                # 自动生成的图表与可视化结果
 ```
 
 ## 快速开始
